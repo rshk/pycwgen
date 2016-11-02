@@ -4,8 +4,8 @@ import wave
 from contextlib import contextmanager
 
 DEFAULT_FRAMERATE = 44100
-DEFAULT_ATTACK = .03
-DEFAULT_RELEASE = .03
+DEFAULT_ATTACK = .02
+DEFAULT_RELEASE = .02
 
 
 def generate_sine_wave(
@@ -13,7 +13,7 @@ def generate_sine_wave(
         duration=10,
         framerate=DEFAULT_FRAMERATE,
         sample_width=2,
-        volume=.9,
+        volume=.8,
         attack=DEFAULT_ATTACK,
         release=DEFAULT_RELEASE):
 
@@ -35,12 +35,14 @@ def generate_envelope(framerate, duration, volume, attack, release):
 
     for f in range(0, attack_frames, 1):
         yield volume * f / attack_frames
+        # yield int(math.sin(2 * math.pi * f / attack_frames)) * volume
 
     for f in range(sound_frames):
         yield volume
 
     for f in range(release_frames, 0, -1):
         yield volume * f / release_frames
+        # yield int(math.sin(2 * math.pi * f / release_frames)) * volume
 
 
 def generate_silence(duration=10, framerate=DEFAULT_FRAMERATE):
@@ -78,29 +80,99 @@ def encode_fragment(fragment, sample_width=2):
     return struct.pack('<' + (fmt * len(fragment)), *fragment)
 
 
-def example():
+def generate_morse(text, fp, wpm=60, tone=800):
 
-    WPM = 12
-    FREQ = 600
+    # dit: 10
+    # dah: 1110
+    # letter A: 10111000
+    # letter S: 10101000
+    # -> Space between letters is 3D, becomes 2
+    # -> Space between words is 7D, becomes 4
 
-    DOT_LENGTH = 1.2 / WPM
+    DOT_LENGTH = 1.2 / wpm
     DOT_SPACE = encode_fragment(generate_silence(duration=DOT_LENGTH))
-    LETTER_SPACE = DOT_SPACE * 2
-    WORD_SPACE = DOT_SPACE * 4
-    DIT = encode_fragment(generate_sine_wave(FREQ, duration=DOT_LENGTH)) \
+    LETTER_SPACE = DOT_SPACE * 2  # DOT_SPACE + 2
+    WORD_SPACE = DOT_SPACE * 2  # DOT_SPACE + LETTER_SPACE + 2 + DOT_SPACE
+    DIT = encode_fragment(generate_sine_wave(tone, duration=DOT_LENGTH)) \
         + DOT_SPACE
-    DAH = encode_fragment(generate_sine_wave(FREQ, duration=DOT_LENGTH * 3)) \
+    DAH = encode_fragment(generate_sine_wave(tone, duration=DOT_LENGTH * 3)) \
         + DOT_SPACE
 
-    LETTER_C = DAH + DIT + DAH + DIT + LETTER_SPACE
-    LETTER_Q = DAH + DAH + DIT + DAH + LETTER_SPACE
+    SOUND_TABLE = {
+        'a': (DIT, DAH),
+        'b': (DAH, DIT, DIT, DIT),
+        'c': (DAH, DIT, DAH, DIT),
+        'd': (DAH, DIT, DIT),
+        'e': (DIT, ),
+        'f': (DIT, DIT, DAH, DIT),
+        'g': (DAH, DAH, DIT),
+        'h': (DIT, DIT, DIT, DIT),
+        'i': (DIT, DIT),
+        'j': (DIT, DAH, DAH, DAH),
+        'k': (DAH, DIT, DAH),
+        'l': (DIT, DAH, DIT, DIT),
+        'm': (DAH, DAH),
+        'n': (DAH, DIT),
+        'o': (DAH, DAH, DAH),
+        'p': (DIT, DAH, DAH, DIT),
+        'q': (DAH, DAH, DIT, DAH),
+        'r': (DIT, DAH, DIT),
+        's': (DIT, DIT, DIT),
+        't': (DAH, ),
+        'u': (DIT, DIT, DAH),
+        'v': (DIT, DIT, DIT, DAH),
+        'w': (DAH, DIT, DIT),
+        'x': (DAH, DIT, DIT, DAH),
+        'y': (DAH, DIT, DAH, DAH),
+        'z': (DAH, DAH, DIT, DIT),
+        ' ': (WORD_SPACE, ),
+        '\n': (DIT, DAH, DIT, DAH),
+        '\r': (),
+        '0': (DAH, DAH, DAH, DAH, DAH),
+        '1': (DIT, DAH, DAH, DAH, DAH),
+        '2': (DIT, DIT, DAH, DAH, DAH),
+        '3': (DIT, DIT, DIT, DAH, DAH),
+        '4': (DIT, DIT, DIT, DIT, DAH),
+        '5': (DIT, DIT, DIT, DIT, DIT),
+        '6': (DAH, DIT, DIT, DIT, DIT),
+        '7': (DAH, DAH, DIT, DIT, DIT),
+        '8': (DAH, DAH, DAH, DIT, DIT),
+        '9': (DAH, DAH, DAH, DAH, DIT),
+        '.': (DIT, DAH, DIT, DAH, DIT, DAH),
+        ',': (DAH, DAH, DIT, DIT, DAH, DAH),
+        '/': (DAH, DIT, DIT, DAH, DIT),
+        '?': (DIT, DIT, DAH, DAH, DIT, DIT),
+        '=': (DAH, DIT, DIT, DIT, DAH),
+        "'": (DIT, DAH, DAH, DAH, DAH, DIT),
+        '!': (DAH, DIT, DAH, DIT, DAH, DAH),
+        '(': (DAH, DIT, DAH, DAH, DIT),
+        ')': (DAH, DIT, DAH, DAH, DIT, DAH),
+        '&': (DIT, DAH, DIT, DIT, DIT),
+        ':': (DAH, DAH, DAH, DIT, DIT, DIT),
+        ';': (DAH, DIT, DAH, DIT, DAH, DIT),
+        '+': (DIT, DAH, DIT, DAH, DIT),
+        '-': (DAH, DIT, DIT, DIT, DIT, DAH),
+        '_': (DIT, DIT, DAH, DAH, DIT, DAH),
+        '"': (DIT, DAH, DIT, DIT, DAH, DIT),
+        '$': (DIT, DIT, DIT, DAH, DIT, DIT, DAH),
+    }
+
+    for letter in text.lower():
+        sound = SOUND_TABLE.get(letter)
+        if sound is None:
+            print('Unknown letter or symbol: {}'.format(sound))
+            continue
+        for elem in sound:
+            fp.writeframes(elem)
+        fp.writeframes(LETTER_SPACE)
+
+
+def example():
 
     with wavewriter('hello.wav') as fp:
         fp.writeframes(encode_fragment(generate_silence(1)))
-        for i in range(4):
-            fp.writeframes(LETTER_C)
-            fp.writeframes(LETTER_Q)
-            fp.writeframes(WORD_SPACE)
+        text = 'cq cq cq cq = The quick brown fox jumps over the lazy dog'
+        generate_morse(text, fp, wpm=20, tone=600)
 
 if __name__ == '__main__':
     example()
