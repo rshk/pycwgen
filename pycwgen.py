@@ -121,7 +121,7 @@ def generate_morse(text, fp, wpm=60, tone=800):
         't': (DAH, ),
         'u': (DIT, DIT, DAH),
         'v': (DIT, DIT, DIT, DAH),
-        'w': (DAH, DIT, DIT),
+        'w': (DIT, DAH, DAH),
         'x': (DAH, DIT, DIT, DAH),
         'y': (DAH, DIT, DAH, DAH),
         'z': (DAH, DAH, DIT, DIT),
@@ -171,8 +171,9 @@ def example():
 
     with wavewriter('hello.wav') as fp:
         fp.writeframes(encode_fragment(generate_silence(1)))
-        text = 'cq cq cq cq = The quick brown fox jumps over the lazy dog'
-        generate_morse(text, fp, wpm=20, tone=600)
+        # text = 'cq cq cq cq = The quick brown fox jumps over the lazy dog'
+        text = 'abcdefghijklmnopqrstuvwxyz'
+        generate_morse(text, fp, wpm=10, tone=600)
 
 if __name__ == '__main__':
     example()
