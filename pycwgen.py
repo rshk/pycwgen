@@ -1,5 +1,9 @@
+import argparse
+import io
 import math
 import struct
+import subprocess
+import sys
 import wave
 from contextlib import contextmanager
 
@@ -167,13 +171,71 @@ def generate_morse(text, fp, wpm=60, tone=800):
         fp.writeframes(LETTER_SPACE)
 
 
-def example():
+@contextmanager
+def output_file(filename):
+    if not filename or filename == '-':
+        yield sys.stdout
+    else:
+        with open(filename, 'wb') as fp:
+            yield fp
 
-    with wavewriter('hello.wav') as fp:
-        fp.writeframes(encode_fragment(generate_silence(1)))
-        # text = 'cq cq cq cq = The quick brown fox jumps over the lazy dog'
-        text = 'abcdefghijklmnopqrstuvwxyz'
-        generate_morse(text, fp, wpm=10, tone=600)
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Generate morse code audio files')
+    parser.add_argument('--input', '-i', dest='input_file',
+                        help='Input text file (default: stdin)')
+    parser.add_argument('--text', '-t', dest='input_text',
+                        help='Input text (directly on the command line)')
+    parser.add_argument('--speed', '-s', dest='speed', type=int, default=12,
+                        help='Speed, in words per minute')
+    parser.add_argument('--tone', dest='tone', type=int, default=800,
+                        help='Tone frequency')
+    parser.add_argument('--output', '-o', dest='output_file',
+                        help='Output file name')
+    parser.add_argument('--format', '-f', dest='output_format',
+                        help='Output file format. wav or mp3 supported. '
+                        'Default is autodetected')
+
+    args = parser.parse_args()
+
+    if args.input_text:
+        text = args.input_text
+    elif args.input_file and (args.input_file != '-'):
+        with open(args.input_file, 'r') as fp:
+            text = fp.read()
+    else:
+        text = sys.stdin.read()
+
+    # Write WAV to memory -> encode later
+    outbuffer = io.BytesIO()
+
+    # FIXME: get from file name etc
+    outfmt = args.output_format or 'mp3'
+
+    with wavewriter(outbuffer) as fp:
+        generate_morse(text, fp, wpm=args.speed, tone=args.tone)
+        # ffmpeg -i - < hello.wav -f mp3 - > hello.mp3
+
+    outdata = encode_stream(outbuffer, outfmt)
+
+    if not args.output_file or args.output_file == '-':
+        sys.stdout.write(outdata)
+    else:
+        with open(args.output_file, 'wb') as fp:
+            fp.write(outdata)
+
+
+def encode_stream(instream, fmt):
+    if fmt == 'wav':
+        return instream.getvalue()  # no processing needed
+
+    proc = subprocess.Popen(['ffmpeg', '-i', '-', '-f', fmt, '-'],
+                            stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE)
+    out, err = proc.communicate(instream.getvalue())
+    return out
+
 
 if __name__ == '__main__':
-    example()
+    main()
