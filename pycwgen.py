@@ -1,201 +1,265 @@
 import argparse
-import io
+import logging
 import math
 import struct
 import subprocess
 import sys
-import wave
+from array import array
 from contextlib import contextmanager
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_FRAMERATE = 44100
 DEFAULT_ATTACK = .02
 DEFAULT_RELEASE = .02
 
+FMT_MP3 = 'mp3'
+FMT_OGG = 'ogg'
+FMT_WAV = 'wav'
+FMT_PCM = 'pcm'
 
-def generate_sine_wave(
-        freq=440,
-        duration=10,
-        framerate=DEFAULT_FRAMERATE,
-        sample_width=2,
-        volume=.8,
-        attack=DEFAULT_ATTACK,
-        release=DEFAULT_RELEASE):
+AUDIO_FORMATS = [FMT_PCM, FMT_WAV, FMT_MP3, FMT_OGG]
 
-    max_ampl = (2 ** (sample_width * 8 - 1))
-    envelope = iter(generate_envelope(
-        framerate, duration, volume, attack, release))
-    return [
-        int(math.sin(2 * math.pi * freq * i / framerate)
-            * max_ampl * next(envelope))
-        for i in range(int(framerate * duration))]
-
-
-def generate_envelope(framerate, duration, volume, attack, release):
-    if (attack + release) > duration:
-        raise ValueError('Attack and release cannot be > duration')
-    attack_frames = int(attack * framerate)
-    release_frames = int(release * framerate)
-    sound_frames = int(framerate * duration) - attack_frames - release_frames
-
-    for f in range(0, attack_frames, 1):
-        yield volume * f / attack_frames
-        # yield int(math.sin(2 * math.pi * f / attack_frames)) * volume
-
-    for f in range(sound_frames):
-        yield volume
-
-    for f in range(release_frames, 0, -1):
-        yield volume * f / release_frames
-        # yield int(math.sin(2 * math.pi * f / release_frames)) * volume
-
-
-def generate_silence(duration=10, framerate=DEFAULT_FRAMERATE):
-    return [0 for i in range(int(framerate * duration))]
+SAMPLE_FORMATS = [
+    # 'u8',
+    # 's8',
+    # 'u16le',
+    # 'u16be',
+    's16le',
+    # 's16be',
+    # 'u24le',
+    # 'u24be',
+    # 's24le',
+    # 's24be',
+    # 'u32le',
+    # 'u32be',
+    # 's32le',
+    # 's32be',
+    # 'floatle',
+    # 'floatbe',
+    # 'doublele',
+    # 'doublebe',
+    # 'u16',
+    # 's16',
+    # 'u24',
+    # 's24',
+    # 'u32',
+    # 's32',
+    # 'float',
+    # 'double',
+]
 
 
-def convert_sample(sample, bits=16):
-    return int(sample * (2 ** (bits - 1) - 1))
+DIT = object()
+DAH = object()
+MORSE_TABLE = {
+    'a': (DIT, DAH),
+    'b': (DAH, DIT, DIT, DIT),
+    'c': (DAH, DIT, DAH, DIT),
+    'd': (DAH, DIT, DIT),
+    'e': (DIT, ),
+    'f': (DIT, DIT, DAH, DIT),
+    'g': (DAH, DAH, DIT),
+    'h': (DIT, DIT, DIT, DIT),
+    'i': (DIT, DIT),
+    'j': (DIT, DAH, DAH, DAH),
+    'k': (DAH, DIT, DAH),
+    'l': (DIT, DAH, DIT, DIT),
+    'm': (DAH, DAH),
+    'n': (DAH, DIT),
+    'o': (DAH, DAH, DAH),
+    'p': (DIT, DAH, DAH, DIT),
+    'q': (DAH, DAH, DIT, DAH),
+    'r': (DIT, DAH, DIT),
+    's': (DIT, DIT, DIT),
+    't': (DAH, ),
+    'u': (DIT, DIT, DAH),
+    'v': (DIT, DIT, DIT, DAH),
+    'w': (DIT, DAH, DAH),
+    'x': (DAH, DIT, DIT, DAH),
+    'y': (DAH, DIT, DAH, DAH),
+    'z': (DAH, DAH, DIT, DIT),
+    '\n': (DIT, DAH, DIT, DAH),
+    '\r': (),
+    '0': (DAH, DAH, DAH, DAH, DAH),
+    '1': (DIT, DAH, DAH, DAH, DAH),
+    '2': (DIT, DIT, DAH, DAH, DAH),
+    '3': (DIT, DIT, DIT, DAH, DAH),
+    '4': (DIT, DIT, DIT, DIT, DAH),
+    '5': (DIT, DIT, DIT, DIT, DIT),
+    '6': (DAH, DIT, DIT, DIT, DIT),
+    '7': (DAH, DAH, DIT, DIT, DIT),
+    '8': (DAH, DAH, DAH, DIT, DIT),
+    '9': (DAH, DAH, DAH, DAH, DIT),
+    '.': (DIT, DAH, DIT, DAH, DIT, DAH),
+    ',': (DAH, DAH, DIT, DIT, DAH, DAH),
+    '/': (DAH, DIT, DIT, DAH, DIT),
+    '?': (DIT, DIT, DAH, DAH, DIT, DIT),
+    '=': (DAH, DIT, DIT, DIT, DAH),
+    "'": (DIT, DAH, DAH, DAH, DAH, DIT),
+    '!': (DAH, DIT, DAH, DIT, DAH, DAH),
+    '(': (DAH, DIT, DAH, DAH, DIT),
+    ')': (DAH, DIT, DAH, DAH, DIT, DAH),
+    '&': (DIT, DAH, DIT, DIT, DIT),
+    ':': (DAH, DAH, DAH, DIT, DIT, DIT),
+    ';': (DAH, DIT, DAH, DIT, DAH, DIT),
+    '+': (DIT, DAH, DIT, DAH, DIT),
+    '-': (DAH, DIT, DIT, DIT, DIT, DAH),
+    '_': (DIT, DIT, DAH, DAH, DIT, DAH),
+    '"': (DIT, DAH, DIT, DIT, DAH, DIT),
+    '$': (DIT, DIT, DIT, DAH, DIT, DIT, DAH),
+}
+
+
+class AudioGenerator:
+
+    def __init__(self, framerate=DEFAULT_FRAMERATE, samplefmt='s16le'):
+        self.framerate = framerate
+        if samplefmt not in SAMPLE_FORMATS:
+            raise ValueError('Invalid sample format: {}. Supported are: {}.'
+                             .format(samplefmt, ', '.join(SAMPLE_FORMATS)))
+        self.samplefmt = samplefmt
+
+    def generate_sine_wave(self, freq=440, duration=1000):
+        """Generate a sine wave.
+
+        Args:
+            freq: frequency, in Hertz
+            duration: sample duration, in milliseconds
+            volume: maximum volume, float between 0 and 1
+            attack: attack time, in ms
+            release: release time, in ms
+        """
+
+        assert self.samplefmt == 's16le'
+
+        for i in range(int(self.framerate * duration / 1000)):
+            value = math.sin(2.0 * math.pi * freq * i / self.framerate)
+            yield int(value * 32767)  # FIXME respect sample format
+
+    def add_envelope(self, sample, volume=1.0, attack=0, release=0):
+        """Add envelope to an audio sample
+
+        Args:
+            sample: iterable containing sound samples
+            volume: maximum volume for the sample
+            attack: attack time, in ms
+            release: release time, in ms
+        """
+
+        attack_frames = int(self.framerate * attack / 1000)
+        release_frames = int(self.framerate * release / 1000)
+        sound_frames = len(sample) - attack_frames - release_frames
+
+        if sound_frames < 0:
+            raise ValueError(
+                'attack ({} ms, {} frames) + release ({} ms, {} frames) time '
+                'cannot be longer than sample duration ({} ms, {} frames)'
+                .format(attack, attack_frames, release, release_frames,
+                        len(sample) / self.framerate * 1000, len(sample)))
+
+        stream = iter(sample)
+        for x in range(attack_frames):
+            yield int(next(stream) * volume * x / attack_frames)  # FIXME fmt
+
+        for x in range(sound_frames):
+            yield int(next(stream) * volume)  # FIXME fmt
+
+        for x in range(release_frames, 0, -1):
+            yield int(next(stream) * volume * x / release_frames)  # FIXME fmt
+
+    def generate_silence(self, duration):
+        for i in range(int(self.framerate * duration / 1000)):
+            yield 0
+
+    def _make_tone(self, tone, duration, volume=.8, attack=20, release=20):
+        sample = array('i', self.generate_sine_wave(
+            freq=tone, duration=duration))
+        wrapped = self.add_envelope(sample, volume=volume, attack=attack,
+                                    release=release)
+        return array('i', wrapped)
+
+    def generate_morse(self, text, wpm=12, tone=800):
+        dot_duration = 1200 / wpm
+
+        dit_sample = self._make_tone(tone, dot_duration)
+        dah_sample = self._make_tone(tone, dot_duration * 3)
+
+        for letter in text.lower():
+            if letter == ' ':
+                # 7dot space, but each character is followed by 3 already
+                for x in self.generate_silence(dot_duration * 4):
+                    yield x
+            else:
+                morse = MORSE_TABLE.get(letter)
+                if not morse:
+                    logger.warning('Unsupported symbol: {}'
+                                   .format(repr(letter)))
+                    continue
+
+                for sym in morse:
+                    if sym is DIT:
+                        for x in dit_sample:
+                            yield x
+                    elif sym is DAH:
+                        for x in dah_sample:
+                            yield x
+                    else:
+                        raise ValueError
+
+                    # Character separator
+                    for x in self.generate_silence(dot_duration):
+                        yield x
+
+                # Letter separator: 3dot, but one was already sent
+                for x in self.generate_silence(dot_duration * 2):
+                    yield x
 
 
 @contextmanager
-def wavewriter(filename, channels=1, sample_width=2,
-               framerate=DEFAULT_FRAMERATE):
-
-    assert channels == 1  # Not supported otherwise
-
-    fp = wave.open(filename, 'wb')
-    fp.setnchannels(channels)
-    fp.setsampwidth(sample_width)
-    fp.setframerate(framerate)
-    yield fp
-    fp.close()
-
-
-def encode_fragment(fragment, sample_width=2):
-    if sample_width == 1:
-        fmt = 'b'
-    elif sample_width == 2:
-        fmt = 'h'
-    elif sample_width == 4:
-        fmt = 'i'
-    else:
-        raise ValueError('Unsupported sample width')
-
-    return struct.pack('<' + (fmt * len(fragment)), *fragment)
-
-
-def generate_morse(text, fp, wpm=60, tone=800):
-
-    # dit: 10
-    # dah: 1110
-    # letter A: 10111000
-    # letter S: 10101000
-    # -> Space between letters is 3D, becomes 2
-    # -> Space between words is 7D, becomes 4
-
-    DOT_LENGTH = 1.2 / wpm
-    DOT_SPACE = encode_fragment(generate_silence(duration=DOT_LENGTH))
-    LETTER_SPACE = DOT_SPACE * 2  # DOT_SPACE + 2
-    WORD_SPACE = DOT_SPACE * 2  # DOT_SPACE + LETTER_SPACE + 2 + DOT_SPACE
-    DIT = encode_fragment(generate_sine_wave(tone, duration=DOT_LENGTH)) \
-        + DOT_SPACE
-    DAH = encode_fragment(generate_sine_wave(tone, duration=DOT_LENGTH * 3)) \
-        + DOT_SPACE
-
-    SOUND_TABLE = {
-        'a': (DIT, DAH),
-        'b': (DAH, DIT, DIT, DIT),
-        'c': (DAH, DIT, DAH, DIT),
-        'd': (DAH, DIT, DIT),
-        'e': (DIT, ),
-        'f': (DIT, DIT, DAH, DIT),
-        'g': (DAH, DAH, DIT),
-        'h': (DIT, DIT, DIT, DIT),
-        'i': (DIT, DIT),
-        'j': (DIT, DAH, DAH, DAH),
-        'k': (DAH, DIT, DAH),
-        'l': (DIT, DAH, DIT, DIT),
-        'm': (DAH, DAH),
-        'n': (DAH, DIT),
-        'o': (DAH, DAH, DAH),
-        'p': (DIT, DAH, DAH, DIT),
-        'q': (DAH, DAH, DIT, DAH),
-        'r': (DIT, DAH, DIT),
-        's': (DIT, DIT, DIT),
-        't': (DAH, ),
-        'u': (DIT, DIT, DAH),
-        'v': (DIT, DIT, DIT, DAH),
-        'w': (DIT, DAH, DAH),
-        'x': (DAH, DIT, DIT, DAH),
-        'y': (DAH, DIT, DAH, DAH),
-        'z': (DAH, DAH, DIT, DIT),
-        ' ': (WORD_SPACE, ),
-        '\n': (DIT, DAH, DIT, DAH),
-        '\r': (),
-        '0': (DAH, DAH, DAH, DAH, DAH),
-        '1': (DIT, DAH, DAH, DAH, DAH),
-        '2': (DIT, DIT, DAH, DAH, DAH),
-        '3': (DIT, DIT, DIT, DAH, DAH),
-        '4': (DIT, DIT, DIT, DIT, DAH),
-        '5': (DIT, DIT, DIT, DIT, DIT),
-        '6': (DAH, DIT, DIT, DIT, DIT),
-        '7': (DAH, DAH, DIT, DIT, DIT),
-        '8': (DAH, DAH, DAH, DIT, DIT),
-        '9': (DAH, DAH, DAH, DAH, DIT),
-        '.': (DIT, DAH, DIT, DAH, DIT, DAH),
-        ',': (DAH, DAH, DIT, DIT, DAH, DAH),
-        '/': (DAH, DIT, DIT, DAH, DIT),
-        '?': (DIT, DIT, DAH, DAH, DIT, DIT),
-        '=': (DAH, DIT, DIT, DIT, DAH),
-        "'": (DIT, DAH, DAH, DAH, DAH, DIT),
-        '!': (DAH, DIT, DAH, DIT, DAH, DAH),
-        '(': (DAH, DIT, DAH, DAH, DIT),
-        ')': (DAH, DIT, DAH, DAH, DIT, DAH),
-        '&': (DIT, DAH, DIT, DIT, DIT),
-        ':': (DAH, DAH, DAH, DIT, DIT, DIT),
-        ';': (DAH, DIT, DAH, DIT, DAH, DIT),
-        '+': (DIT, DAH, DIT, DAH, DIT),
-        '-': (DAH, DIT, DIT, DIT, DIT, DAH),
-        '_': (DIT, DIT, DAH, DAH, DIT, DAH),
-        '"': (DIT, DAH, DIT, DIT, DAH, DIT),
-        '$': (DIT, DIT, DIT, DAH, DIT, DIT, DAH),
-    }
-
-    for letter in text.lower():
-        sound = SOUND_TABLE.get(letter)
-        if sound is None:
-            print('Unknown letter or symbol: {}'.format(sound))
-            continue
-        for elem in sound:
-            fp.writeframes(elem)
-        fp.writeframes(LETTER_SPACE)
-
-
-@contextmanager
-def output_file(filename):
+def outstream(filename):
     if not filename or filename == '-':
-        yield sys.stdout
+        yield sys.stdout.buffer
     else:
         with open(filename, 'wb') as fp:
             yield fp
 
 
+def guess_format_from_filename(filename, default='mp3'):
+    if not filename:
+        return default
+    if '.' in filename:
+        ext = filename.rsplit('.', 1)[1]
+        if ext in AUDIO_FORMATS:
+            return ext
+    logger.warning('Unable to guess format from filename. '
+                   'Defaulting to {}'.format(default))
+    return default
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='Generate morse code audio files')
-    parser.add_argument('--input', '-i', dest='input_file',
-                        help='Input text file (default: stdin)')
-    parser.add_argument('--text', '-t', dest='input_text',
-                        help='Input text (directly on the command line)')
-    parser.add_argument('--speed', '-s', dest='speed', type=int, default=12,
-                        help='Speed, in words per minute')
-    parser.add_argument('--tone', dest='tone', type=int, default=800,
-                        help='Tone frequency')
-    parser.add_argument('--output', '-o', dest='output_file',
-                        help='Output file name')
-    parser.add_argument('--format', '-f', dest='output_format',
-                        help='Output file format. wav or mp3 supported. '
-                        'Default is autodetected')
+    parser.add_argument(
+        '--input', '-i', dest='input_file',
+        help='Input text file (default: stdin)')
+    parser.add_argument(
+        '--text', '-t', dest='input_text',
+        help='Input text (directly on the command line)')
+    parser.add_argument(
+        '--speed', '-s', dest='speed', type=int, default=12,
+        help='Speed, in words per minute (default: 12)')
+    parser.add_argument(
+        '--tone', dest='tone', type=int, default=800,
+        help='Tone frequency. Defaults to 800 Hz.')
+    parser.add_argument(
+        '--output', '-o', dest='output_file',
+        help='Output file name. Defaults to standard output.')
+    parser.add_argument(
+        '--format', '-f', dest='output_format',
+        choices=AUDIO_FORMATS, default=None,
+        help='Output file format. Supported: wav, pcm, mp3, ogg. '
+        'If omitted, will be guessed from file extension.')
 
     args = parser.parse_args()
 
@@ -207,34 +271,34 @@ def main():
     else:
         text = sys.stdin.read()
 
-    # Write WAV to memory -> encode later
-    outbuffer = io.BytesIO()
+    audiogen = AudioGenerator()
+    audio_data = audiogen.generate_morse(text, wpm=args.speed, tone=args.tone)
 
-    # FIXME: get from file name etc
-    outfmt = args.output_format or 'mp3'
+    output_format = args.output_format
+    if output_format is None:
+        output_format = guess_format_from_filename(args.output_file)
 
-    with wavewriter(outbuffer) as fp:
-        generate_morse(text, fp, wpm=args.speed, tone=args.tone)
-        # ffmpeg -i - < hello.wav -f mp3 - > hello.mp3
-
-    outdata = encode_stream(outbuffer, outfmt)
-
-    if not args.output_file or args.output_file == '-':
-        sys.stdout.write(outdata)
+    if output_format == FMT_PCM:
+        write_raw_pcm(audio_data, args.output_file)
     else:
-        with open(args.output_file, 'wb') as fp:
-            fp.write(outdata)
+        write_audio_file(audio_data, args.output_file, output_format)
 
 
-def encode_stream(instream, fmt):
-    if fmt == 'wav':
-        return instream.getvalue()  # no processing needed
+def write_raw_pcm(audio_data, filename):
+    with outstream(filename) as fp:
+        for sample in audio_data:
+            fp.write(struct.pack('<h', sample))
 
-    proc = subprocess.Popen(['ffmpeg', '-i', '-', '-f', fmt, '-'],
-                            stdin=subprocess.PIPE,
-                            stdout=subprocess.PIPE)
-    out, err = proc.communicate(instream.getvalue())
-    return out
+
+def write_audio_file(audio_data, filename, fmt):
+    cmd = ['ffmpeg', '-f', 's16le', '-ar', '44.1k', '-ac', '1',
+           '-i', '-', '-f', fmt, '-']
+    with outstream(filename) as fp:
+        p = subprocess.Popen(cmd, stdout=fp, stdin=subprocess.PIPE)
+        for sample in audio_data:
+            p.stdin.write(struct.pack('<h', sample))
+        p.stdin.close()
+        p.wait()
 
 
 if __name__ == '__main__':
