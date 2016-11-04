@@ -1,6 +1,7 @@
 import argparse
 import logging
 import math
+import re
 import struct
 import subprocess
 import sys
@@ -21,32 +22,17 @@ FMT_PCM = 'pcm'
 AUDIO_FORMATS = [FMT_PCM, FMT_WAV, FMT_MP3, FMT_OGG]
 
 SAMPLE_FORMATS = [
-    # 'u8',
-    # 's8',
-    # 'u16le',
-    # 'u16be',
+    # 'u8', 's8',
+    # 'u16le', 'u16be',
     's16le',
     # 's16be',
-    # 'u24le',
-    # 'u24be',
-    # 's24le',
-    # 's24be',
-    # 'u32le',
-    # 'u32be',
-    # 's32le',
-    # 's32be',
-    # 'floatle',
-    # 'floatbe',
-    # 'doublele',
-    # 'doublebe',
-    # 'u16',
-    # 's16',
-    # 'u24',
-    # 's24',
-    # 'u32',
-    # 's32',
-    # 'float',
-    # 'double',
+    # 'u24le', 'u24be', 's24le', 's24be',
+    # 'u32le', 'u32be', 's32le', 's32be',
+    # 'floatle', 'floatbe', 'doublele', 'doublebe',
+    # 'u16', 's16',
+    # 'u24', 's24',
+    # 'u32', 's32',
+    # 'float', 'double',
 ]
 
 
@@ -185,7 +171,7 @@ class AudioGenerator:
         dit_sample = self._make_tone(tone, dot_duration)
         dah_sample = self._make_tone(tone, dot_duration * 3)
 
-        for letter in text.lower():
+        for letter in normalize_text(text):
             if letter == ' ':
                 # 7dot space, but each character is followed by 3 already
                 for x in self.generate_silence(dot_duration * 4):
@@ -216,6 +202,13 @@ class AudioGenerator:
                     yield x
 
 
+def normalize_text(text):
+    text = text.lower()
+    text = text.strip()
+    text = re.sub(r'\s+', ' ', text)
+    return text
+
+
 @contextmanager
 def outstream(filename):
     if not filename or filename == '-':
@@ -230,7 +223,7 @@ def guess_format_from_filename(filename, default='mp3'):
         return default
     if '.' in filename:
         ext = filename.rsplit('.', 1)[1]
-        if ext in AUDIO_FORMATS:
+        if ext:
             return ext
     logger.warning('Unable to guess format from filename. '
                    'Defaulting to {}'.format(default))
@@ -256,9 +249,10 @@ def main():
         '--output', '-o', dest='output_file',
         help='Output file name. Defaults to standard output.')
     parser.add_argument(
-        '--format', '-f', dest='output_format',
-        choices=AUDIO_FORMATS, default=None,
-        help='Output file format. Supported: wav, pcm, mp3, ogg. '
+        '--format', '-f', dest='output_format', default=None,
+        help='Output file format. Can be "pcm", or any format '
+        'supported by ffmpeg (see ffmpeg -formats). '
+        'Try for example mp3, wav, ogg. '
         'If omitted, will be guessed from file extension.')
 
     args = parser.parse_args()
