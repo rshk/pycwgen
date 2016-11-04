@@ -6,8 +6,8 @@ Generate Morse code (CW, continuous wave) audio files from Python.
 
 - Read text input from file, stdin or on the command line
 - Variable tone frequency and word speed
-- Output 16bit audio at 44.1kHz
-- Output formats: mp3, ogg, wav, raw pcm
+- Outputs 16bit audio at 44.1kHz
+- Outputs raw PCM, or encodes via ffmpeg (including mp3, ogg and wav)
 
 The generated audio is a sine wave, with a 20 ms attack / release
 angle to make it sound better to the ear.
