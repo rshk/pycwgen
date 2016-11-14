@@ -65,8 +65,8 @@ MORSE_TABLE = {
     'x': (DAH, DIT, DIT, DAH),
     'y': (DAH, DIT, DAH, DAH),
     'z': (DAH, DAH, DIT, DIT),
-    '\n': (DIT, DAH, DIT, DAH),
-    '\r': (),
+    # '\n': (DIT, DAH, DIT, DAH),
+    # '\r': (),
     '0': (DAH, DAH, DAH, DAH, DAH),
     '1': (DIT, DAH, DAH, DAH, DAH),
     '2': (DIT, DIT, DAH, DAH, DAH),
@@ -106,76 +106,92 @@ class AudioGenerator:
                              .format(samplefmt, ', '.join(SAMPLE_FORMATS)))
         self.samplefmt = samplefmt
 
-    def generate_sine_wave(self, freq=440, duration=1000):
+    def generate_sine_wave(self, freq=440, duration=1000,
+                           volume=.9, attack=0, release=0):
         """Generate a sine wave.
 
         Args:
-            freq: frequency, in Hertz
-            duration: sample duration, in milliseconds
-            volume: maximum volume, float between 0 and 1
+            freq: frequency, in Hz
+            duration: sample duration, in ms
+            volume: maximum amplitude for the sample (0-1)
             attack: attack time, in ms
             release: release time, in ms
         """
 
         assert self.samplefmt == 's16le'
+        max_value = 32767
 
-        for i in range(int(self.framerate * duration / 1000)):
-            value = math.sin(2.0 * math.pi * freq * i / self.framerate)
-            yield int(value * 32767)  # FIXME respect sample format
+        frames_count = int(self.framerate * duration / 1000)
+        sine_wave = self._make_sine_wave(freq=freq, frames=frames_count)
+        envelope = self._make_envelope(
+            volume=volume, frames_count=frames_count,
+            attack_frames=int(attack * self.framerate / 1000),
+            release_frames=int(release * self.framerate / 1000))
 
-    def add_envelope(self, sample, volume=1.0, attack=0, release=0):
-        """Add envelope to an audio sample
+        for sample, env in zip(sine_wave, envelope):
+            yield int(sample * env * max_value)
 
-        Args:
-            sample: iterable containing sound samples
-            volume: maximum volume for the sample
-            attack: attack time, in ms
-            release: release time, in ms
-        """
+    def _make_sine_wave(self, freq, frames):
+        for i in range(frames):
+            yield math.sin(2.0 * math.pi * freq * i / self.framerate)
 
-        attack_frames = int(self.framerate * attack / 1000)
-        release_frames = int(self.framerate * release / 1000)
-        sound_frames = len(sample) - attack_frames - release_frames
+    def _make_envelope(self, volume, frames_count, attack_frames,
+                       release_frames):
+
+        sound_frames = frames_count - attack_frames - release_frames
 
         if sound_frames < 0:
+            attack_time = attack_frames / self.framerate * 1000
+            release_time = release_frames / self.framerate * 1000
+            audio_time = frames_count / self.framerate * 1000
             raise ValueError(
                 'attack ({} ms, {} frames) + release ({} ms, {} frames) time '
                 'cannot be longer than sample duration ({} ms, {} frames)'
-                .format(attack, attack_frames, release, release_frames,
-                        len(sample) / self.framerate * 1000, len(sample)))
+                .format(attack_time, attack_frames,
+                        release_time, release_frames,
+                        audio_time, frames_count))
 
-        stream = iter(sample)
         for x in range(attack_frames):
-            yield int(next(stream) * volume * x / attack_frames)  # FIXME fmt
+            yield (volume * x / attack_frames)  # FIXME sine?
 
         for x in range(sound_frames):
-            yield int(next(stream) * volume)  # FIXME fmt
+            yield (volume)  # FIXME fmt
 
         for x in range(release_frames, 0, -1):
-            yield int(next(stream) * volume * x / release_frames)  # FIXME fmt
+            yield (volume * x / release_frames)  # FIXME sine?
 
-    def generate_silence(self, duration):
-        for i in range(int(self.framerate * duration / 1000)):
-            yield 0
+    # def generate_silence(self, duration):
+    #     for i in range(int(self.framerate * duration / 1000)):
+    #         yield 0
 
     def _make_tone(self, tone, duration, volume=.8, attack=20, release=20):
-        sample = array('i', self.generate_sine_wave(
-            freq=tone, duration=duration))
-        wrapped = self.add_envelope(sample, volume=volume, attack=attack,
-                                    release=release)
-        return array('i', wrapped)
+        sample_gen = self.generate_sine_wave(
+            freq=tone, duration=duration, volume=volume, attack=attack,
+            release=release)
+        audio_data = array('i', sample_gen)
+        enc_data = struct.pack('<' + ('h' * len(audio_data)), *audio_data)
+        return enc_data
+
+    def _make_silence(self, duration):
+        frames = int(self.framerate * duration / 1000)
+        return struct.pack('<h', 0) * frames
 
     def generate_morse(self, text, wpm=12, tone=800):
         dot_duration = 1200 / wpm
 
-        dit_sample = self._make_tone(tone, dot_duration)
-        dah_sample = self._make_tone(tone, dot_duration * 3)
+        samples = {
+            DIT: self._make_tone(tone, dot_duration),
+            DAH: self._make_tone(tone, dot_duration * 3),
+        }
+
+        silence_1x = self._make_silence(dot_duration)
+        silence_2x = self._make_silence(dot_duration * 2)
+        silence_4x = self._make_silence(dot_duration * 4)
 
         for letter in normalize_text(text):
             if letter == ' ':
                 # 7dot space, but each character is followed by 3 already
-                for x in self.generate_silence(dot_duration * 4):
-                    yield x
+                yield silence_4x
             else:
                 morse = MORSE_TABLE.get(letter)
                 if not morse:
@@ -184,22 +200,10 @@ class AudioGenerator:
                     continue
 
                 for sym in morse:
-                    if sym is DIT:
-                        for x in dit_sample:
-                            yield x
-                    elif sym is DAH:
-                        for x in dah_sample:
-                            yield x
-                    else:
-                        raise ValueError
+                    yield samples[sym]
+                    yield silence_1x  # Character separator
 
-                    # Character separator
-                    for x in self.generate_silence(dot_duration):
-                        yield x
-
-                # Letter separator: 3dot, but one was already sent
-                for x in self.generate_silence(dot_duration * 2):
-                    yield x
+                yield silence_2x  # Letter separator: 3dot (one already sent)
 
 
 def normalize_text(text):
@@ -280,19 +284,29 @@ def main():
 
 def write_raw_pcm(audio_data, filename):
     with outstream(filename) as fp:
-        for sample in audio_data:
-            fp.write(struct.pack('<h', sample))
+        for chunk in audio_data:
+            fp.write(chunk)
 
 
 def write_audio_file(audio_data, filename, fmt):
-    cmd = ['ffmpeg', '-f', 's16le', '-ar', '44.1k', '-ac', '1',
-           '-i', '-', '-f', fmt, '-']
     with outstream(filename) as fp:
-        p = subprocess.Popen(cmd, stdout=fp, stdin=subprocess.PIPE)
-        for sample in audio_data:
-            p.stdin.write(struct.pack('<h', sample))
-        p.stdin.close()
-        p.wait()
+        encode_audio(b''.join(audio_data), fp, fmt)
+
+
+def encode_audio(audio_data, fp, fmt):
+    cmd = ['ffmpeg',
+#           '-loglevel', 'error',
+           '-f', 's16le',
+           '-ar', '44.1k', '-ac', '1',
+           '-i', '-',
+           '-f', fmt,
+           '-']
+    p = subprocess.Popen(cmd, stdout=fp, stdin=subprocess.PIPE)
+    p.stdin.write(audio_data)
+    # for sample in audio_data:
+    #     p.stdin.write(struct.pack('<h', sample))
+    p.stdin.close()
+    p.wait()
 
 
 if __name__ == '__main__':

@@ -102,3 +102,4 @@ ENV/
 *.mp3
 *.pcm
 *.ogg
+.venv*
