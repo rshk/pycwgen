@@ -295,7 +295,7 @@ def write_audio_file(audio_data, filename, fmt):
 
 def encode_audio(audio_data, fp, fmt):
     cmd = ['ffmpeg',
-#           '-loglevel', 'error',
+           '-loglevel', 'error',
            '-f', 's16le',
            '-ar', '44.1k', '-ac', '1',
            '-i', '-',
