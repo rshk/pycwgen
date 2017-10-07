@@ -2,7 +2,7 @@ import click
 
 import soundfile
 
-from .morse import generate_morse_code
+from .morse import stream_morse_code
 
 
 @click.command()
@@ -43,14 +43,14 @@ def cli(input_file, input_text, speed, tone, output_file, output_format,
     if not input_text:
         input_text = input_file.read()
 
-    audio_data = generate_morse_code(input_text, wpm=speed, tone=tone)
-
-    soundfile.write(
-        output_file,
-        audio_data,
+    options = dict(
         samplerate=44100,
+        channels=1,
         subtype=output_subtype,
         format=output_format)
+
+    with soundfile.SoundFile(output_file, 'w', **options) as fp:
+        stream_morse_code(fp, input_text, wpm=speed, tone=tone)
 
 
 cli()

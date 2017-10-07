@@ -78,6 +78,12 @@ def generate_morse_code(text, wpm, tone=600):
     return numpy.concatenate(samples)
 
 
+def stream_morse_code(fp, text, wpm, tone=600):
+    text = normalize_text(text)
+    for sample in _generate_morse_samples(text, wpm, tone):
+        fp.write(sample)
+
+
 def _generate_morse_samples(text, wpm, tone):
     dit_duration = 1.2 / wpm
     dah_duration = dit_duration * 3
