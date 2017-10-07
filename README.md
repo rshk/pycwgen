@@ -2,40 +2,72 @@
 
 Generate Morse code (CW, continuous wave) audio files from Python.
 
+![](.img/wave-73.png)
+
 ## Features
 
-- Read text input from file, stdin or on the command line
-- Variable tone frequency and word speed
-- Outputs 16bit audio at 44.1kHz
-- Outputs raw PCM, or encodes via ffmpeg (including mp3, ogg and wav)
+- Read text input from file, standard input or on the command line
+- Set word speed and tone frequency
+- Output single-channel audio at 44.1kHz, via sndfile
+- Supports multiple output formats (including PCM, WAV, OGG)
 
-The generated audio is a sine wave, with a 20 ms attack / release
-angle to make it sound better to the ear.
+Smooth attack and release angles, to reduce sound harshness:
 
-![](.img/waveform.png)
+![](.img/wave-detail.png)
+
+
+## Planned features
+
+- Background noise (allow setting signal-to-noise ratio)
+- Band-pass filtering (to make it sound more natural, filter the background noise)
+- Imprecise keying (slightly vary the symbol speed, to simulate someone using a straight key)
+- Distort tone
+- Simulate QSB (randomly fade the signal level)
+- Simulate QRM? (add "interfering" transmissions on nearby frequencies)
 
 
 ## Usage
 
 ```
-usage: pycwgen.py [-h] [--input INPUT_FILE] [--text INPUT_TEXT]
-                  [--speed SPEED] [--tone TONE] [--output OUTPUT_FILE]
-                  [--format {pcm,wav,mp3,ogg}]
+Usage: pycwgen [OPTIONS]
 
-Generate morse code audio files
-
-optional arguments:
-  -h, --help            show this help message and exit
-  --input INPUT_FILE, -i INPUT_FILE
-                        Input text file (default: stdin)
-  --text INPUT_TEXT, -t INPUT_TEXT
-                        Input text (directly on the command line)
-  --speed SPEED, -s SPEED
-                        Speed, in words per minute (default: 12)
-  --tone TONE           Tone frequency. Defaults to 800 Hz.
-  --output OUTPUT_FILE, -o OUTPUT_FILE
-                        Output file name. Defaults to standard output.
-  --format {pcm,wav,mp3,ogg}, -f {pcm,wav,mp3,ogg}
-                        Output file format. Supported: wav, pcm, mp3, ogg. If
-                        omitted, will be guessed from file extension.
+Options:
+  -i, --input FILENAME  Input text file (defaults to stdin)
+  -t, --text TEXT       Input text. Overrides --input.
+  -s, --speed INTEGER   Speed, in words per minute (default: 12)
+  --tone INTEGER        Tone frequency, in Hz (default: 600)
+  -o, --output PATH     Name of the output file
+  -f, --format TEXT     Output format. Use --list-formats to see the available
+                        formats
+  --subtype TEXT        Output format sub-type
+  --list-formats        List the available formats and exit
+  --list-subtypes TEXT  List the available sub-types for the specified format
+                        and exit
+  --help                Show this message and exit.
 ```
+
+
+## Supported audio formats
+
+Supports all the output formats suported by libsndfile, including:
+AIFF, FLAC, OGG, RAW, WAVEX, WAV.
+Unfortunately mp3 is not supported for legal reasons, and WebM support
+is work in progress.
+
+In the meantime, you can simply convert the audio using ffmpeg, for
+example:
+
+```
+ffmpeg -i input.ogg output.mp3
+```
+
+In case you need to convert RAW PCM data (without headers), you can
+use something like this:
+
+```
+ffmpeg -f s16le -ar 44.1k -ac 1 -i input.pcm -f mp3 output.mp3
+```
+
+**Note:** make sure you select an appropriate format matching the
+pycwgen output format you chose. In this case, 16-bit signed integers,
+using little endian encoding.
