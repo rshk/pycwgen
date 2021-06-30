@@ -122,7 +122,7 @@ def _generate_morse_samples(text, wpm, tone):
             yield samples[SYMBOL_SPACE]
         yield samples[LETTER_SPACE]
 
-    for letter in normalize_text(text):
+    for letter in text.lower():
         yield from _encode_letter(letter)
 
 
