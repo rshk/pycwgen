@@ -72,14 +72,16 @@ MORSE_TABLE = {
 }
 
 
-def generate_morse_code(text, wpm, tone=600):
-    text = normalize_text(text)
+def generate_morse_code(text, wpm, tone=600, normalize=True):
+    if normalize:
+        text = normalize_text(text)
     samples = list(_generate_morse_samples(text, wpm, tone))
     return numpy.concatenate(samples)
 
 
-def stream_morse_code(fp, text, wpm, tone=600):
-    text = normalize_text(text)
+def stream_morse_code(fp, text, wpm, tone=600, normalize=True):
+    if normalize:
+        text = normalize_text(text)
     for sample in _generate_morse_samples(text, wpm, tone):
         fp.write(sample)
 
